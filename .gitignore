@@ -1,0 +1,12 @@
+.env
+data/*/*.xlsx
+output/
+logs/
+__pycache__/
+*.pyc
+venv/
+
+# any folder starting with a dot and everything in it: .vscode/, .claude/,
+# .venv/, .ipynb_checkpoints/, .idea/, etc. NOTE: this also hides a future
+# .github/ (e.g. CI workflows) - un-ignore that specifically if you add one.
+.*/
