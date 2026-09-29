@@ -216,6 +216,25 @@ and `season_*` (official full-season stats - NaN while the season is
 running, or for players who left Serie A mid-season). Never use `y`
 columns as inputs.
 
+For targets that aren't mostly already in `X` (a season average at
+matchday 30 is 30/38 known), use `future`: the unseen matchdays as a long
+time series, same players and columns as the snapshot's, so any target
+can be built downstream.
+
+```python
+fut = dataset.future("2023-24", 10)       # matchdays 11..38, players in X's order
+f = fut[fut["in_serie_a"] == 1]           # drop matchdays after he left Serie A
+g = f.groupby("player_id")
+rest_fantamedia  = g["fantavote"].mean()                                  # rest-of-season average
+rest_appearances = g["played"].sum()                                      # availability
+rest_goals       = (f["goals"] + f["penalties_scored"]).groupby(f["player_id"]).sum()
+next5_fantamedia = f[f["matchday"] <= 15].groupby("player_id")["fantavote"].mean()
+```
+
+Extra columns: `team` (that matchday's club, NaN if absent) and
+`in_serie_a` (0 once he has left the league - mask those rows). A running
+season stops at the last downloaded matchday. Never use it as a feature.
+
 Rows are the players in Serie A as of matchday N (`dataset.roster()`),
 using only what was known then, so a past season at matchday N looks like
 a live one. There's no per-matchday squad list, so this is: anyone in a
@@ -225,6 +244,68 @@ same club as the season before (their end-of-season `stats` list would
 include January signings). Summer signings not yet fielded by matchday N
 are missed for past seasons. `team` is the latest team seen up to
 matchday N, falling back to that same `stats` team.
+
+### 5. Feature encoders
+
+`fantatool/features/` turns `snapshot()` output into model inputs. It
+never reads anything `dataset.py` didn't hand it, except finished seasons.
+
+```python
+from fantatool import dataset
+from fantatool.features.team import TeamEncoder
+
+X, X_ts = dataset.snapshot("2023-24", 10)
+team_X = TeamEncoder(prior_weight=5).transform(X, X_ts)   # one row per X row, same order
+table  = TeamEncoder().team_table(X, X_ts)                # one row per team
+```
+
+`TeamEncoder` replaces the team name with:
+
+- `league_*` - one-hot league (constant `league_serie_a=1` for now: only
+  Serie A has matchday data)
+- `team_matches`, `team_gf_pg`, `team_ga_pg`, `team_avg_vote`,
+  `team_avg_fantavote` - team strength over matchdays 1..N
+- `team_prev_*` - the same over the whole of last season, from last
+  season's matchday votes (each goal counts for the club of that day;
+  falls back on official `stats` if last season's votes are incomplete).
+  NaN + `team_promoted=1` for promoted teams
+- `team_blend_*` - so-far shrunk towards last season,
+  `(n*so_far + k*prev)/(n+k)`; promoted teams use last season's bottom-3
+  average as prior
+
+`RoleEncoder` (`fantatool/features/role.py`) encodes the two roles:
+
+```python
+from fantatool.features.role import RoleEncoder
+role_X = RoleEncoder().transform(X, X_ts)   # one row per X row, same order
+```
+
+- `role_classic_{p,d,c,a}` - one-hot of `role_classic`
+- `role_mantra_{por,dc,dd,ds,b,e,m,c,t,w,a,pc}` - **multi**-hot of
+  `role_mantra`: a player holds 1-3 Mantra roles ("M;C" sets both `m`
+  and `c`). All zeros if unknown.
+
+The blocks are independent, not nested: some Mantra roles are held by
+several classic roles (`E` by D and C, `W` by A/C/D). Unknown labels raise.
+
+Further encoders, same `transform(X, X_ts)` shape, each with its own prefix:
+
+| module | prefix | what |
+|---|---|---|
+| `features/player.py` | `player_` | previous league one-hot (+ unknown), `changed_club`, `new_to_serie_a`, missing-data flags, per-match rates last season / so far, this season minus last (`delta_*`), old club's strength and `club_step_*` (new minus old) |
+| `features/squad.py` | `squad_` | teammates in the same role, rank among them (prev fantamedia, starting price, so-far fantamedia / appearances), share of team matches / goals / assists / penalties so far, penalty-taker signals from last season |
+| `features/form.py` | `form_` | last-3 / last-5 / whole-season windows (played and S.V. rate, vote, fantavote, bonus, goals, assists), last vote, matchdays since last played, streaks, fantavote spread / trend / EWM, cards rate |
+| `features/sequence.py` | - | arrays for sequence models: `values` (players x 38 x features, NaN and padding as 0), `mask` (on the pitch), `observed` (matchday <= N) |
+
+All tabular encoders at once:
+
+```python
+from fantatool.features import encode_all
+F = encode_all(X, X_ts)                                  # X's numbers + every encoding
+F = encode_all(X, X_ts, ["team", "form"], keep_raw=False)  # a subset, encodings only
+```
+
+Pick encoders downstream, with cross-validation grouped by season.
 
 ## Weekly update
 

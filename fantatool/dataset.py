@@ -34,6 +34,9 @@ import pandas as pd
 from . import loader
 
 VOTE_SOURCE = "Fantacalcio"
+
+# The prices files spell some leagues differently across seasons.
+LEAGUE_ALIASES = {"Liga1": "Ligue 1"}
 LAST_MATCHDAY = 38
 
 # Official classic fantacalcio bonus/malus, applied on top of the vote.
@@ -73,6 +76,13 @@ def _season_stats(conno, season):
     return df.drop_duplicates("player_id").set_index("player_id")
 
 
+def season_stats(conno, season):
+    """Official full-season summary per player (one row per player_id).
+    Only a leak-free input for a season that is over - e.g. the previous
+    season relative to the one being predicted."""
+    return _season_stats(conno, season)
+
+
 def _season_prices(conno, season):
     """Euroleghe prices: league (the file's "Nazione" column is the league,
     not nationality) and starting price Qt.I. Only the Euroleghe pool
@@ -86,6 +96,7 @@ def _season_prices(conno, season):
         )
     except pd.errors.DatabaseError:  # no prices downloaded at all
         df = pd.DataFrame(columns=["player_id", "league", "price_initial"])
+    df["league"] = df["league"].replace(LEAGUE_ALIASES)
     return df.drop_duplicates("player_id").set_index("player_id")
 
 
@@ -341,6 +352,54 @@ def xy(current_season, current_matchday):
         players, ts = _snapshot(conno, current_season, current_matchday)
         y = _unseen(conno, current_season, current_matchday, players["player_id"])
     return players, ts, y
+
+
+FUTURE_COLS = ["played", "sv", "vote", "fantavote"] + EVENT_COLS
+
+
+def _future(conno, current_season, current_matchday, player_ids):
+    last = last_matchday(conno, current_season)
+    votes = _season_votes(conno, current_season, last)
+    votes = votes[votes["matchday"] > current_matchday]
+    grid = pd.MultiIndex.from_product(
+        [list(player_ids), range(current_matchday + 1, last + 1)], names=["player_id", "matchday"]
+    ).to_frame(index=False)
+    fut = grid.merge(votes[["player_id", "matchday", "team"] + FUTURE_COLS], on=["player_id", "matchday"], how="left")
+    fut[["played", "sv"]] = fut[["played", "sv"]].fillna(0).astype(int)
+
+    # in_serie_a: still at a Serie A club that matchday. Yes up to his
+    # last appearance; after it, only if he's in the season's `stats`
+    # list (end-of-season squads, or today's for a running season).
+    # Otherwise he left (e.g. sold abroad in January): mask those rows.
+    last_seen = votes.groupby("player_id")["matchday"].max()
+    in_stats = fut["player_id"].isin(_season_stats(conno, current_season).index)
+    seen_later = fut["matchday"] <= fut["player_id"].map(last_seen).fillna(0)
+    fut["in_serie_a"] = (in_stats | seen_later).astype(int)
+
+    fut.insert(0, "season", current_season)
+    return fut[["season", "player_id", "matchday", "in_serie_a", "team"] + FUTURE_COLS]
+
+
+def future(current_season, current_matchday):
+    """The unseen matchdays after `current_matchday`, as a long time series
+    for the same players as snapshot()/xy() - the raw material for any
+    target (rest-of-season fantamedia, goals in the next k matchdays, ...).
+
+    One row per (player, matchday current_matchday+1 .. last downloaded),
+    players in snapshot()'s order. Same columns as the snapshot's time
+    series (played, sv, vote, fantavote, events; NaN / 0 when he didn't
+    play), plus:
+
+    team        club in that matchday's votes file, NaN when he's absent
+    in_serie_a  0 once he has left Serie A (no later appearance and not in
+                the season's stats list) - mask those rows, "didn't play"
+                there means "wasn't in the league", not "was benched"
+
+    For a running season it stops at the last downloaded matchday (empty
+    if current_matchday is that one). Target only - never a feature."""
+    with loader.connect() as conno:
+        players, _ = _snapshot(conno, current_season, current_matchday)
+        return _future(conno, current_season, current_matchday, players["player_id"])
 
 
 def _role_key(s):
