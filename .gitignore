@@ -6,6 +6,9 @@ __pycache__/
 *.pyc
 venv/
 
+# I use this notebook to test out code
+playground.ipynb
+
 # any folder starting with a dot and everything in it: .vscode/, .claude/,
 # .venv/, .ipynb_checkpoints/, .idea/, etc. NOTE: this also hides a future
 # .github/ (e.g. CI workflows) - un-ignore that specifically if you add one.

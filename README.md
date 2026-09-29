@@ -159,6 +159,73 @@ runs). A re-merge across the full Serie A (2020-21 to now) + Euro Leghe
 (2017-18 to now) + Serie A votes (2020-21 to now, ~270 matchday files)
 dataset takes well under a minute.
 
+### 4. Modelling dataset
+
+```
+python fanta.py dataset --seasons 2025-26 --matchday 5
+python fanta.py dataset --seasons all --matchday 5
+```
+
+Builds `output/dataset_<seasons>_md<N>.csv` for predicting a player's
+full-season performance from his previous season and his first N
+matchdays (`fantatool/dataset.py`, or `dataset.build(season, matchday)`
+from code). One row per (player, season):
+
+- `prev_*` - previous Serie A season summary from `stats` (appearances,
+  avg_vote, fantamedia, goals, assists, cards, ...). NaN if the player
+  wasn't in Serie A that season. Age, nationality, height and foot are
+  not in any fantacalcio.it export we download.
+- `mdXX_*` - one block per matchday 1..N: `played`, `sv`, `vote`,
+  `fantavote`, bonus/malus events. Every player gets every block; `vote`
+  and `fantavote` are NaN when he wasn't rated. `sv=1` means he came on
+  but got S.V. ("6*" in the raw file) - excluded from averages exactly
+  like fantacalcio.it does. `fantavote` uses the classic bonus/malus
+  (`FANTAVOTE_WEIGHTS`); `raw__rf` in votes is penalties scored.
+- `target_*` - the official full-season summary from `stats`. NaN for a
+  season that isn't finished yet (no matchday 38 in `votes`), and for
+  players who left Serie A mid-season.
+
+For "what do we know about each player right after matchday N" - no
+targets, nothing from later matchdays - use `snapshot` instead:
+
+```python
+from fantatool import dataset
+players, ts = dataset.snapshot("2023-24", 10)
+```
+
+`players` is one row per player: identity (`name`, `role_classic` (P/D/C/A), `role_mantra`,
+`team`), `price_initial` (Euroleghe starting price Qt.I, set pre-season -
+NaN outside the Euroleghe pool), `prev_league` (Serie A, or the league from
+last season's Euroleghe prices, else NaN), `prev_*`, and `so_far_*`
+(this season's appearances, S.V. count, avg vote, fantamedia, goals, ...
+over matchdays 1..N only, same definitions as `stats`). `ts` is the long
+time series, one row per (player, matchday 1..N). The same call on a past
+season gives exactly what you'd have had live (tested: adding future data
+to the DB leaves the snapshot unchanged).
+
+To get features and outcomes for a model in one call, use `xy`:
+
+```python
+X, X_ts, y = dataset.xy("2023-24", 10)
+```
+
+`X`, `X_ts` are exactly `snapshot()`. `y` is one row per player, same
+order, holding what's still unseen at matchday N: `next_*` (matchday N+1:
+played, sv, vote, fantavote, events - NaN if not downloaded yet or N=38)
+and `season_*` (official full-season stats - NaN while the season is
+running, or for players who left Serie A mid-season). Never use `y`
+columns as inputs.
+
+Rows are the players in Serie A as of matchday N (`dataset.roster()`),
+using only what was known then, so a past season at matchday N looks like
+a live one. There's no per-matchday squad list, so this is: anyone in a
+votes file for matchdays 1..N, plus - for a live season - the whole
+`stats` list (today's squads), or - for a past season - players at the
+same club as the season before (their end-of-season `stats` list would
+include January signings). Summer signings not yet fielded by matchday N
+are missed for past seasons. `team` is the latest team seen up to
+matchday N, falling back to that same `stats` team.
+
 ## Weekly update
 
 ```

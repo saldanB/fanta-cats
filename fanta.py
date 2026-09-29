@@ -6,13 +6,16 @@
                        [--file-types stats prices votes votes_euroleghe]
                        [--matchdays 1-38] [--update-current]
     fanta.py merge
+    fanta.py dataset  --seasons 2024-25 2025-26 | all  --matchday 5
 
 See README.md for the full workflow.
 """
 
 import argparse
 
-from fantatool import downloader, merge, probe
+import pandas as pd
+
+from fantatool import config, dataset, downloader, loader, merge, probe
 
 
 def _parse_matchdays(values):
@@ -25,6 +28,19 @@ def _parse_matchdays(values):
         else:
             result.append(int(v))
     return sorted(set(result))
+
+
+def _run_dataset(seasons, matchday):
+    with loader.connect() as conn:
+        if seasons == ["all"]:
+            seasons = [r[0] for r in conn.execute("SELECT DISTINCT season FROM stats ORDER BY season")]
+        frames = [dataset.build_dataset(conn, s, matchday) for s in seasons]
+    df = pd.concat(frames, ignore_index=True)
+    tag = seasons[0] if len(seasons) == 1 else f"{seasons[0]}_to_{seasons[-1]}"
+    path = config.OUTPUT_DIR / f"dataset_{tag}_md{matchday:02d}.csv"
+    df.to_csv(path, index=False)
+    has_target = df["target_fantamedia"].notna().sum()
+    print(f"[dataset] wrote {path} ({len(df)} rows, {df.shape[1]} columns, {has_target} with target)")
 
 
 def main():
@@ -45,6 +61,10 @@ def main():
 
     sub.add_parser("merge", help="Step 3: build fanta.db, CSVs, needs_review.csv, fanta_summary.xlsx")
 
+    p_ds = sub.add_parser("dataset", help="Step 4: build the modelling dataset (prev-season summary + first matchdays -> full season)")
+    p_ds.add_argument("--seasons", nargs="+", required=True, help="current_season labels, e.g. 2024-25 2025-26, or 'all' (every season in stats)")
+    p_ds.add_argument("--matchday", type=int, required=True, help="current_matchday: time series covers matchdays 1..N")
+
     args = parser.parse_args()
 
     if args.command == "probe":
@@ -54,6 +74,8 @@ def main():
         downloader.run_download(args.seasons, args.leagues, args.file_types, args.update_current, matchdays=matchdays)
     elif args.command == "merge":
         merge.run_merge()
+    elif args.command == "dataset":
+        _run_dataset(args.seasons, args.matchday)
 
 
 if __name__ == "__main__":
