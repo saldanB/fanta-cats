@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" width="200" alt="Fanta Cats logo">
+  <img src="logo_dark.png" width="200" alt="Fanta Cats logo">
 </p>
 
 # Fanta Cats
