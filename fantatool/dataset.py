@@ -73,6 +73,9 @@ def _season_stats(conno, season):
         conno,
         params=[season],
     )
+    # The export writes 0 (not blank) as the averages of players who never
+    # got a vote; 0 would read as a catastrophic season, so make it missing.
+    df.loc[df["appearances"] == 0, ["avg_vote", "fantamedia"]] = np.nan
     return df.drop_duplicates("player_id").set_index("player_id")
 
 

@@ -7,3 +7,7 @@ unidecode>=1.3
 # only needed to run notebooks/explore_fanta_db.ipynb
 jupyter>=1.0
 matplotlib>=3.8
+
+# only needed to run the modeling notebooks (baseline_model, bagging_ridge, ensemble_models)
+scikit-learn>=1.6
+gridsearchoob @ git+https://github.com/saldanB/gridsearchoob.git
